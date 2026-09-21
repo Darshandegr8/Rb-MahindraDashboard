@@ -116,7 +116,14 @@
     text-shadow: 0 0 20px rgba(227, 25, 55, 0.6);
     line-height: 1;
   }
-  #speed-unit { font-size: 13px; color: #c9c9cc; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 2px; }
+  #speed-unit { font-size: 13px; color: #c9c9cc; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 2px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  #live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #E31937;
+    box-shadow: 0 0 8px rgba(227, 25, 55, 0.9);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
   /* Corner widgets */
   .corner-widget {
@@ -225,7 +232,7 @@
 
   <div id="speed-hud">
     <div id="speed-value">0</div>
-    <div id="speed-unit">km/h · parked</div>
+    <div id="speed-unit"><span id="live-dot"></span><span id="speed-unit-text">km/h · parked</span></div>
   </div>
 
   <div class="corner-widget focusable" id="cw-airpressure" tabindex="0" data-panel="airpressure">
@@ -268,59 +275,112 @@
   'use strict';
 
   // =========================================================
-  // MOCK VEHICLE DATA (swap for real Mahindra connected-car
-  // API responses later -- structure kept realistic on purpose)
+  // MOCK VEHICLE DATA -- now backed by a lightweight simulation
+  // instead of fixed values. Swap `simulateTick()` for real
+  // Mahindra connected-car API polling later; everything that
+  // reads from `state.*` stays the same either way.
   // =========================================================
-  var MOCK_DATA = {
-    airpressure: {
-      label: 'Air Pressure',
-      icon: '🛞',
-      summaryValue: '32 psi',
-      alert: false,
-      rows: [
-        ['Front Left', '32 psi'],
-        ['Front Right', '32 psi'],
-        ['Rear Left', '31 psi'],
-        ['Rear Right', '30 psi ⚠', true]
-      ]
-    },
-    fuel: {
-      label: 'Fuel',
-      icon: '⛽',
-      summaryValue: '68%',
-      alert: false,
-      rows: [
-        ['Level', '68%'],
-        ['Range', '412 km'],
-        ['Fuel Type', 'Diesel'],
-        ['Avg. Efficiency', '15.2 km/l']
-      ]
-    },
-    warnings: {
-      label: 'Warnings',
-      icon: '⚠️',
-      summaryValue: '1 active',
-      alert: true,
-      rows: [
-        ['Tire Pressure', 'Rear-right low', true],
-        ['Engine', 'Normal'],
-        ['Battery', 'Normal'],
-        ['Service Due', 'in 1,240 km']
-      ]
-    },
-    navigation: {
-      label: 'Navigation',
-      icon: '🧭',
-      summaryValue: 'Not set',
-      alert: false,
-      rows: [
-        ['Destination', 'Not set'],
-        ['Last trip', 'Office · 18.4 km'],
-        ['Saved places', '4'],
-        ['Suggested', 'Set for your commute']
-      ]
-    }
+  var state = {
+    tires: { fl: 32.0, fr: 32.0, rl: 31.0, rr: 30.0 }, // psi
+    fuelPct: 68.0,
+    fuelRangeKm: 412,
+    battery: 'Normal',
+    engineTemp: 'Normal',
+    serviceDueKm: 1240,
+    destSet: false,
+    lastTripKm: 18.4
   };
+
+  var TIRE_WARN_PSI = 29.0;
+  var FUEL_WARN_PCT = 15.0;
+
+  function fmtPsi(v) { return v.toFixed(1) + ' psi'; }
+
+  function buildMockData() {
+    var lowTires = Object.keys(state.tires).filter(function (k) { return state.tires[k] < TIRE_WARN_PSI; });
+    var fuelLow = state.fuelPct < FUEL_WARN_PCT;
+    var anyWarning = lowTires.length > 0 || fuelLow;
+
+    var warningRows = [];
+    if (lowTires.length) {
+      warningRows.push(['Tire Pressure', lowTires.map(function (k) { return k.toUpperCase(); }).join(', ') + ' low', true]);
+    } else {
+      warningRows.push(['Tire Pressure', 'Normal']);
+    }
+    warningRows.push(['Fuel Level', fuelLow ? 'Low — refuel soon' : 'Normal', fuelLow]);
+    warningRows.push(['Engine', state.engineTemp]);
+    warningRows.push(['Battery', state.battery]);
+    warningRows.push(['Service Due', 'in ' + Math.round(state.serviceDueKm) + ' km']);
+
+    return {
+      airpressure: {
+        label: 'Air Pressure',
+        icon: '🛞',
+        summaryValue: fmtPsi(Math.min(state.tires.fl, state.tires.fr, state.tires.rl, state.tires.rr)),
+        alert: lowTires.length > 0,
+        rows: [
+          ['Front Left', fmtPsi(state.tires.fl), state.tires.fl < TIRE_WARN_PSI],
+          ['Front Right', fmtPsi(state.tires.fr), state.tires.fr < TIRE_WARN_PSI],
+          ['Rear Left', fmtPsi(state.tires.rl), state.tires.rl < TIRE_WARN_PSI],
+          ['Rear Right', fmtPsi(state.tires.rr), state.tires.rr < TIRE_WARN_PSI]
+        ]
+      },
+      fuel: {
+        label: 'Fuel',
+        icon: '⛽',
+        summaryValue: Math.round(state.fuelPct) + '%',
+        alert: fuelLow,
+        rows: [
+          ['Level', Math.round(state.fuelPct) + '%', fuelLow],
+          ['Range', Math.round(state.fuelRangeKm) + ' km'],
+          ['Fuel Type', 'Diesel'],
+          ['Avg. Efficiency', '15.2 km/l']
+        ]
+      },
+      warnings: {
+        label: 'Warnings',
+        icon: '⚠️',
+        summaryValue: anyWarning ? (lowTires.length + (fuelLow ? 1 : 0)) + ' active' : 'All clear',
+        alert: anyWarning,
+        rows: warningRows
+      },
+      navigation: {
+        label: 'Navigation',
+        icon: '🧭',
+        summaryValue: state.destSet ? 'En route' : 'Not set',
+        alert: false,
+        rows: [
+          ['Destination', state.destSet ? 'Office' : 'Not set'],
+          ['Last trip', 'Office · ' + state.lastTripKm.toFixed(1) + ' km'],
+          ['Saved places', '4'],
+          ['Suggested', 'Set for your commute']
+        ]
+      }
+    };
+  }
+
+  var MOCK_DATA = buildMockData();
+
+  function simulateTick() {
+    // Small random-walk drift on tire pressures (real sensors are noisy).
+    Object.keys(state.tires).forEach(function (k) {
+      state.tires[k] += (Math.random() - 0.52) * 0.15; // slight downward bias, like a real slow leak
+      state.tires[k] = Math.max(24, Math.min(34, state.tires[k]));
+    });
+
+    // Fuel drains very slowly even at idle; occasional tiny noise.
+    state.fuelPct = Math.max(0, state.fuelPct - 0.03 - Math.random() * 0.02);
+    state.fuelRangeKm = Math.max(0, state.fuelRangeKm - 0.4);
+
+    // Service countdown ticks down slowly.
+    state.serviceDueKm = Math.max(0, state.serviceDueKm - 0.5);
+
+    MOCK_DATA = buildMockData();
+    refreshCornerValues();
+    if (panelExpanded) openDetail(PANEL_ORDER[currentPanelIndex]); // re-render live detail card
+  }
+
+  setInterval(simulateTick, 2000);
 
   var PANEL_ORDER = ['airpressure', 'warnings', 'navigation', 'fuel']; // clockwise: TL -> TR -> BR -> BL
 
@@ -411,7 +471,7 @@
 
     var loader = new THREE.GLTFLoader();
     loader.load(
-      './2022_mahindra_scorpio-n.glb',
+      './MahindraScopio.glb',
       function (gltf) {
         var root = gltf.scene;
 
@@ -446,15 +506,21 @@
     }
     render();
 
-    // Mock speed animation to sell "live sync" feel (parked baseline, gentle idle drift)
+    // Speed simulation: hovers around a target (~80 km/h) with gentle
+    // random-walk drift, so it reads as live telemetry rather than idle.
     var speedEl = document.getElementById('speed-value');
-    var unitEl = document.getElementById('speed-unit');
-    var t = 0;
+    var unitEl = document.getElementById('speed-unit-text');
+    var currentSpeed = 0;
+    var targetSpeed = 80;
+
     setInterval(function () {
-      t += 0.3;
-      var idle = Math.max(0, Math.round(Math.sin(t) * 1.2));
-      speedEl.textContent = idle;
-      unitEl.textContent = idle === 0 ? 'km/h · parked' : 'km/h · idle';
+      // Random-walk toward the target with occasional small drift, clamped to a realistic band.
+      currentSpeed += (targetSpeed - currentSpeed) * 0.08 + (Math.random() - 0.5) * 4;
+      currentSpeed = Math.max(0, Math.min(120, currentSpeed));
+
+      var displaySpeed = Math.round(currentSpeed);
+      speedEl.textContent = displaySpeed;
+      unitEl.textContent = displaySpeed < 3 ? 'km/h · parked' : 'km/h · driving';
     }, 800);
   }
 
