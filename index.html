@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no" />
 <meta name="description" content="Mahindra AR pre-drive dashboard concept for Meta Ray-Ban Display" />
@@ -267,12 +269,32 @@
   <div id="nav-hint">← → rotate car · ↑ ↓ switch panel · Enter: expand / close</div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
 <script>
 (function () {
   'use strict';
+
+  // =========================================================
+  // LAZY-LOAD the heavy 3D stack (three.js + loaders, ~700KB)
+  // only when the user actually reaches the dashboard, instead
+  // of blocking the select-car screen's interactivity on it.
+  // =========================================================
+  var heavyAssetsPromise = null;
+  function loadScriptTag(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  function ensureHeavyAssetsLoaded() {
+    if (heavyAssetsPromise) return heavyAssetsPromise;
+    heavyAssetsPromise = loadScriptTag('https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js')
+      .then(function () { return loadScriptTag('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js'); })
+      .then(function () { return loadScriptTag('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js'); });
+    return heavyAssetsPromise;
+  }
 
   // =========================================================
   // MOCK VEHICLE DATA -- now backed by a lightweight simulation
@@ -406,6 +428,7 @@
     selectedCar = carName;
     showScreen('sync');
     document.getElementById('sync-text').textContent = 'Syncing with ' + carName + '…';
+    ensureHeavyAssetsLoaded(); // kick off the 3D stack download now, in parallel with the sync animation
     setTimeout(function () {
       showScreen('dash');
       document.getElementById('cw-airpressure').focus();
@@ -430,9 +453,12 @@
   function initDashboardIfNeeded() {
     if (dashInitialized) return;
     dashInitialized = true;
-    setupCarScene();
     refreshCornerValues();
     highlightActivePanel();
+    ensureHeavyAssetsLoaded().then(setupCarScene).catch(function (err) {
+      document.getElementById('car-loading').textContent = 'Failed to load 3D assets';
+      console.error('Heavy asset load error:', err);
+    });
   }
 
   function setupCarScene() {
@@ -446,7 +472,7 @@
 
     var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(W, H);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(1); // glasses panel is fixed 600x600 -- no benefit from supersampling, only GPU cost
     document.getElementById('car-canvas-wrap').appendChild(renderer.domElement);
 
     scene.add(new THREE.AmbientLight(0x223344, 0.8));
@@ -469,7 +495,7 @@
     dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/draco/');
     loader.setDRACOLoader(dracoLoader);
     loader.load(
-      './MahindraScopio.glb',
+      './MahindraScopio_optimized.glb',
       function (gltf) {
         var root = gltf.scene;
 
@@ -496,12 +522,20 @@
       }
     );
 
-    function render() {
+    // Explicitly pace to ~30fps (33ms) to match the glasses' hard 30Hz
+    // panel -- rendering faster than that only burns GPU/battery for
+    // frames that panel can't display anyway.
+    var lastFrameTime = 0;
+    var FRAME_BUDGET_MS = 1000 / 30;
+
+    function render(now) {
+      requestAnimationFrame(render);
+      if (now - lastFrameTime < FRAME_BUDGET_MS) return;
+      lastFrameTime = now;
       carGroup.rotation.y = rotY;
       renderer.render(scene, camera);
-      requestAnimationFrame(render);
     }
-    render();
+    requestAnimationFrame(render);
 
     // Speed simulation: hovers around a target (~80 km/h) with gentle
     // random-walk drift, so it reads as live telemetry rather than idle.
