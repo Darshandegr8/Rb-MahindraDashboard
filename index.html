@@ -212,7 +212,6 @@
     <div class="car-info"><span class="car-name">Scorpio-N</span><span class="car-variant">Z8L 4WD Diesel</span></div>
   </div>
 
-  <button id="start-btn" class="focusable disabled" tabindex="0">Start · Sync with car</button>
   <div id="proto-note">Concept prototype — all vehicle data shown is simulated, not live telemetry.</div>
 </div>
 
@@ -401,34 +400,30 @@
   }
 
   var selectedCar = null;
-  var startBtn = document.getElementById('start-btn');
   var carOptions = Array.from(document.querySelectorAll('.car-option'));
 
-  carOptions.forEach(function (el) {
-    el.addEventListener('click', function () {
-      carOptions.forEach(function (o) { o.style.borderColor = ''; o.dataset.selected = ''; });
-      el.dataset.selected = 'true';
-      el.style.borderColor = '#E31937';
-      selectedCar = el.dataset.car;
-      startBtn.classList.remove('disabled');
-      startBtn.textContent = 'Start · Sync with ' + selectedCar;
-    });
-  });
-
-  startBtn.addEventListener('click', function () {
-    if (startBtn.classList.contains('disabled')) return;
+  function startSyncWith(carName) {
+    selectedCar = carName;
     showScreen('sync');
+    document.getElementById('sync-text').textContent = 'Syncing with ' + carName + '…';
     setTimeout(function () {
       showScreen('dash');
       document.getElementById('cw-airpressure').focus();
       initDashboardIfNeeded();
     }, 1400);
+  }
+
+  carOptions.forEach(function (el) {
+    el.addEventListener('click', function () {
+      startSyncWith(el.dataset.car);
+    });
   });
 
   // =========================================================
   // DASHBOARD: 3D car model (stylized placeholder) + corner UI
   // =========================================================
   var rotY = 0.6; // manual rotation, driven by Left/Right input only -- no auto-rotate
+  var dashInitialized = false;
   var currentPanelIndex = 0;
   var panelExpanded = false;
 
