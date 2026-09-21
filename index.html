@@ -265,7 +265,7 @@
     <div id="detail-hint">Enter / pinch to close · ← → to switch panel</div>
   </div>
 
-  <div id="nav-hint">← → swipe between panels · Enter: expand / close</div>
+  <div id="nav-hint">← → rotate car · ↑ ↓ switch panel · Enter: expand / close</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -428,7 +428,7 @@
   // =========================================================
   // DASHBOARD: 3D car model (stylized placeholder) + corner UI
   // =========================================================
-  var dashInitialized = false;
+  var rotY = 0.6; // manual rotation, driven by Left/Right input only -- no auto-rotate
   var currentPanelIndex = 0;
   var panelExpanded = false;
 
@@ -466,8 +466,7 @@
     var carGroup = new THREE.Group();
     scene.add(carGroup);
 
-    var rotY = 0.6;
-    var autoRotate = true;
+    // (render loop below reads the shared outer `rotY` directly every frame)
     var modelLoaded = false;
 
     var loader = new THREE.GLTFLoader();
@@ -503,7 +502,6 @@
     );
 
     function render() {
-      if (autoRotate) rotY += 0.006;
       carGroup.rotation.y = rotY;
       renderer.render(scene, camera);
       requestAnimationFrame(render);
@@ -594,24 +592,49 @@
   // =========================================================
   // D-PAD / SWIPE NAVIGATION (MRBD spec)
   // =========================================================
-  var DPAD = { LEFT: 'ArrowLeft', RIGHT: 'ArrowRight', SELECT: 'Enter', BACK: 'Escape' };
+  var DPAD = { LEFT: 'ArrowLeft', RIGHT: 'ArrowRight', UP: 'ArrowUp', DOWN: 'ArrowDown', SELECT: 'Enter', BACK: 'Escape' };
 
   document.addEventListener('keydown', function (e) {
     var onDash = screens.dash.classList.contains('active');
 
     if (!onDash) {
-      // Simple focus handling on select screen
-      if (e.key === DPAD.SELECT && document.activeElement) {
-        document.activeElement.click();
+      // Select-car screen: Up/Down move between car options + Start button,
+      // Enter activates whichever is focused.
+      var selectFocusables = Array.from(document.querySelectorAll('#screen-select .focusable'));
+      var curIdx = selectFocusables.indexOf(document.activeElement);
+
+      switch (e.key) {
+        case DPAD.UP:
+          if (curIdx === -1) { selectFocusables[0].focus(); }
+          else { selectFocusables[Math.max(0, curIdx - 1)].focus(); }
+          e.preventDefault();
+          break;
+        case DPAD.DOWN:
+          if (curIdx === -1) { selectFocusables[0].focus(); }
+          else { selectFocusables[Math.min(selectFocusables.length - 1, curIdx + 1)].focus(); }
+          e.preventDefault();
+          break;
+        case DPAD.SELECT:
+          if (document.activeElement) document.activeElement.click();
+          e.preventDefault();
+          break;
+        default:
+          break;
       }
       return;
     }
 
     switch (e.key) {
       case DPAD.LEFT:
-        goToPanel(currentPanelIndex - 1);
+        rotY -= 0.18; // rotate car left
         break;
       case DPAD.RIGHT:
+        rotY += 0.18; // rotate car right
+        break;
+      case DPAD.UP:
+        goToPanel(currentPanelIndex - 1);
+        break;
+      case DPAD.DOWN:
         goToPanel(currentPanelIndex + 1);
         break;
       case DPAD.SELECT:
@@ -627,20 +650,27 @@
     e.preventDefault();
   });
 
-  // ---- Swipe gesture support (pinch+drag horizontally) ----
-  var touchStartX = null;
+  // ---- Swipe gesture support: horizontal = rotate car, vertical = switch panel ----
+  var touchStartX = null, touchStartY = null;
   document.addEventListener('pointerdown', function (e) {
     if (!screens.dash.classList.contains('active')) return;
     touchStartX = e.clientX;
+    touchStartY = e.clientY;
   });
   document.addEventListener('pointerup', function (e) {
     if (touchStartX === null || !screens.dash.classList.contains('active')) return;
     var dx = e.clientX - touchStartX;
-    if (Math.abs(dx) > 40) {
-      if (dx < 0) goToPanel(currentPanelIndex + 1);
-      else goToPanel(currentPanelIndex - 1);
+    var dy = e.clientY - touchStartY;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (Math.abs(dx) > 20) rotY += dx * 0.006; // horizontal drag rotates the car
+    } else {
+      if (Math.abs(dy) > 40) {
+        if (dy < 0) goToPanel(currentPanelIndex - 1);
+        else goToPanel(currentPanelIndex + 1);
+      }
     }
     touchStartX = null;
+    touchStartY = null;
   });
 
   window.addEventListener('load', function () {
